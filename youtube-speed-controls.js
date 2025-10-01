@@ -5,8 +5,8 @@
 // @description  Adds +/- buttons with a centered speed readout that adjusts playback via YouTube's API, and saves playback speed between videos.
 // @author       selfdigest
 // @homepageURL  https://github.com/selfdigest/scripts
-// @downloadURL  https://raw.githubusercontent.com/selfdigest/scripts/main/scripts/youtube-speed-controls.js
-// @updateURL    https://raw.githubusercontent.com/selfdigest/scripts/main/scripts/youtube-speed-controls.js
+// @downloadURL  https://raw.githubusercontent.com/selfdigest/scripts/refs/heads/main/youtube-speed-controls.js
+// @updateURL    https://raw.githubusercontent.com/selfdigest/scripts/refs/heads/main/youtube-speed-controls.js
 // @match        https://www.youtube.com/watch*
 // @grant        none
 // @run-at       document-start

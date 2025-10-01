@@ -1,9 +1,10 @@
 // ==UserScript==
-// @name         YouTube Native Speed Controls
-// @namespace    http://tampermonkey.net/
+// @name         YouTube Speed Controls
+// @namespace    https://github.com/selfdigest/scripts
 // @version      1.0
 // @description  Adds +/- buttons with a centered speed readout that adjusts playback via YouTube's API, and saves playback speed between videos.
 // @author       selfdigest
+// @homepageURL  https://github.com/selfdigest/scripts
 // @downloadURL  https://raw.githubusercontent.com/selfdigest/scripts/main/scripts/youtube-speed-controls.js
 // @updateURL    https://raw.githubusercontent.com/selfdigest/scripts/main/scripts/youtube-speed-controls.js
 // @match        https://www.youtube.com/watch*

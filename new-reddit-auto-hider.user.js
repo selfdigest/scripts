@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         New Reddit Auto Hider
 // @namespace    https://github.com/selfdigest/scripts
-// @version      1.0
+// @version      1.1
 // @description  Hides previously voted/hidden posts on page load and navigation.
 // @author       selfdigest
 // @homepageURL  https://github.com/selfdigest/scripts
@@ -41,9 +41,11 @@
   }
   // --- End Configuration ---
 
-  console.log('Reddit Hider (v11 - Simplified): Script active. Instant-hide on click is disabled.');
+  console.log('Reddit Hider v1.1 (Simplified): Script active. Instant-hide on click is disabled.');
 
   let feedObserver = null;
+
+  const shouldProcess = () => /^\/r\//.test(window.location.pathname);
 
   const processPost = (post) => {
     if (!post || post.hasAttribute('data-script-hidden')) {
@@ -75,6 +77,11 @@
   };
 
   const setupFeedListeners = (feed) => {
+    if (!shouldProcess()) {
+      if (feedObserver) feedObserver.disconnect();
+      return;
+    }
+
     console.log('Reddit Hider (v11): New feed detected. Scanning posts.');
 
     if (feedObserver) {

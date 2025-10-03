@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Speed Controls
 // @namespace    https://github.com/selfdigest/scripts
-// @version      1.0
+// @version      1.1
 // @description  Adds +/- buttons with a centered speed readout that adjusts playback via YouTube's API, and saves playback speed between videos.
 // @author       selfdigest
 // @homepageURL  https://github.com/selfdigest/scripts
@@ -20,9 +20,19 @@
   const ANCHOR_SELECTOR = '.ytp-right-controls';
   const STEP_RATES_FALLBACK = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5];
   const STORAGE_KEY = 'yt-native-speed';
+  const BUTTON_SIZE_PX = 48;
+  const DISPLAY_HEIGHT_PX = 40;
 
   const rewindIconSVG = `<svg height="100%" viewBox="0 0 24 24" width="100%" aria-hidden="true"><path d="M6,12l8,6v-5l8,5V6l-8,5V6L6,12z" fill="currentColor"></path></svg>`;
   const fastForwardIconSVG = `<svg height="100%" viewBox="0 0 24 24" width="100%" aria-hidden="true"><path d="M18,12L10,6v5L2,6v12l8-5v5L18,12z" fill="currentColor"></path></svg>`;
+
+  let controllerEl = null;
+  let displayEl = null;
+  let ratechangeTarget = null;
+  let refreshTimerId = null;
+  let pendingSetup = false;
+  let anchorResizeObserver = null;
+  let observedAnchor = null;
 
   function readStoredRate() {
     try {
@@ -39,6 +49,18 @@
   }
 
   let mutationObserver = null;
+
+  function isElementVisible(el) {
+    if (!el || !el.isConnected) return false;
+    const rect = el.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) return false;
+    const style = window.getComputedStyle(el);
+    return style && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0';
+  }
+
+  function findControlsAnchor() {
+    return Array.from(document.querySelectorAll(ANCHOR_SELECTOR)).find(isElementVisible) || null;
+  }
 
   function getPlayer() {
     return document.getElementById('movie_player') || document.querySelector('#movie_player');
@@ -82,6 +104,7 @@
       }
     } catch (_) {}
     if (save) writeStoredRate(clamped);
+    updateDisplay();
   }
 
   function stepRate(direction) {
@@ -94,71 +117,195 @@
     setRate(rates[newIdx]);
   }
 
-  function injectControls() {
-    if (document.getElementById(CONTROLLER_ID)) return;
+  function updateDisplay() {
+    if (displayEl) displayEl.textContent = getCurrentRate().toFixed(2) + 'x';
+  }
 
-    const anchor = document.querySelector(ANCHOR_SELECTOR);
+  function bindRatechangeListener() {
+    const video = getVideo();
+    if (ratechangeTarget === video) return;
+    if (ratechangeTarget) {
+      ratechangeTarget.removeEventListener('ratechange', updateDisplay);
+      ratechangeTarget = null;
+    }
+    if (video) {
+      ratechangeTarget = video;
+      video.addEventListener('ratechange', updateDisplay, { passive: true });
+    }
+  }
+
+  function startRefreshTimer() {
+    if (refreshTimerId) clearInterval(refreshTimerId);
+    refreshTimerId = setInterval(() => {
+      if (!controllerEl || !controllerEl.isConnected) {
+        clearInterval(refreshTimerId);
+        refreshTimerId = null;
+        return;
+      }
+      updateDisplay();
+      bindRatechangeListener();
+    }, 1000);
+  }
+
+  function injectControls() {
+    const anchor = findControlsAnchor();
     if (!anchor || !anchor.parentElement) return;
 
-    const wrapper = document.createElement('div');
-    wrapper.id = CONTROLLER_ID;
-    wrapper.style.cssText = [
+    const host = anchor.parentElement;
+
+    if (controllerEl && controllerEl.isConnected) {
+      if (controllerEl.nextElementSibling !== anchor) host.insertBefore(controllerEl, anchor);
+      applyLayout(anchor);
+      ensureAnchorObserver(anchor);
+      updateDisplay();
+      bindRatechangeListener();
+      startRefreshTimer();
+      return;
+    }
+
+    controllerEl = document.createElement('div');
+    controllerEl.id = CONTROLLER_ID;
+    controllerEl.style.cssText = [
       'display:flex',
       'align-items:center',
-      'margin-right:8px',
-      'gap:6px'
+      'gap:8px',
+      'margin-right:12px',
+      'padding:0 18px',
+      'background:rgba(0,0,0,0.3)'
     ].join(' !important; ') + ' !important;';
+
+    displayEl = document.createElement('span');
+    displayEl.title = 'Click to reset to 1.00x';
+    displayEl.setAttribute('role', 'button');
+    displayEl.setAttribute('tabindex', '0');
+    displayEl.style.cssText = [
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'font-size:16px',
+      'font-weight:600',
+      'color:white',
+      `height:${DISPLAY_HEIGHT_PX}px`,
+      'min-width:72px',
+      'padding:0 18px',
+      'font-variant-numeric:tabular-nums',
+      'cursor:pointer',
+      'user-select:none',
+      `border-radius:${Math.round(DISPLAY_HEIGHT_PX / 2)}px`,
+      'background:rgba(0,0,0,0.4)'
+    ].join(' !important; ') + ' !important;';
+
+    const resizeButtonSvg = (btn) => {
+      const svg = btn.querySelector('svg');
+      if (!svg) return;
+      svg.style.maxWidth = 'none';
+      svg.style.maxHeight = 'none';
+    };
 
     const mkBtn = (title, svg, onClick) => {
       const btn = document.createElement('button');
       btn.className = 'ytp-button';
+      btn.type = 'button';
       btn.title = title;
       btn.setAttribute('aria-label', title);
-      btn.style.cssText = 'display:flex;align-items:center;justify-content:center;width:36px;height:36px;color:white;';
+      btn.style.cssText = [
+        'display:flex',
+        'align-items:center',
+        'justify-content:center',
+        `width:${BUTTON_SIZE_PX}px`,
+        `height:${BUTTON_SIZE_PX}px`,
+        'color:white',
+        'border:none',
+        'background:transparent',
+        `border-radius:${Math.round(BUTTON_SIZE_PX / 2)}px`,
+        'padding:0'
+      ].join(' !important; ') + ' !important;';
       btn.innerHTML = svg;
-      btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onClick(); });
+      resizeButtonSvg(btn);
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onClick();
+      });
       return btn;
     };
-
-    const display = document.createElement('span');
-    display.style.cssText = [
-      'font-size:16px',
-      'font-weight:600',
-      'color:white',
-      'min-width:48px',
-      'text-align:center',
-      'font-variant-numeric:tabular-nums',
-      'cursor:pointer',
-      'user-select:none'
-    ].join(' !important; ') + ' !important;';
-    display.title = 'Click to reset to 1.00x';
 
     const decBtn = mkBtn('Decrease speed', rewindIconSVG, () => stepRate('down'));
     const incBtn = mkBtn('Increase speed', fastForwardIconSVG, () => stepRate('up'));
 
-    wrapper.appendChild(decBtn);
-    wrapper.appendChild(display);
-    wrapper.appendChild(incBtn);
+    controllerEl.appendChild(decBtn);
+    controllerEl.appendChild(displayEl);
+    controllerEl.appendChild(incBtn);
 
-    anchor.parentElement.insertBefore(wrapper, anchor);
-
-    const refresh = () => { display.textContent = getCurrentRate().toFixed(2); };
-    refresh();
-
-    const v = getVideo();
-    if (v) v.addEventListener('ratechange', refresh, { passive: true });
-
-    display.addEventListener('click', (e) => {
+    displayEl.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       setRate(1);
-      refresh();
+    });
+    displayEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        setRate(1);
+      }
     });
 
-    const pollId = setInterval(() => {
-      if (!document.body.contains(wrapper)) { clearInterval(pollId); return; }
-      refresh();
-    }, 1000);
+    host.insertBefore(controllerEl, anchor);
+
+    applyLayout(anchor);
+    ensureAnchorObserver(anchor);
+    updateDisplay();
+    bindRatechangeListener();
+    startRefreshTimer();
+  }
+
+  function ensureAnchorObserver(anchor) {
+    if (!('ResizeObserver' in window)) {
+      observedAnchor = anchor;
+      return;
+    }
+    if (observedAnchor === anchor) return;
+    if (anchorResizeObserver) anchorResizeObserver.disconnect();
+    anchorResizeObserver = new ResizeObserver(() => {
+      if (controllerEl && anchor.isConnected) applyLayout(anchor);
+    });
+    anchorResizeObserver.observe(anchor);
+    observedAnchor = anchor;
+  }
+
+  function applyLayout(anchor) {
+    if (!controllerEl) return;
+    const anchorStyles = window.getComputedStyle(anchor);
+    const anchorHeight = anchorStyles ? parseFloat(anchorStyles.height) : NaN;
+    const pillHeight = Number.isFinite(anchorHeight) && anchorHeight > 0 ? anchorHeight : 48;
+    const buttonSize = Math.max(32, Math.min(BUTTON_SIZE_PX, pillHeight - 6));
+    const buttonRadius = Math.round(buttonSize / 2);
+    const displayHeight = Math.max(32, Math.min(pillHeight - 4, pillHeight));
+    const displayRadius = Math.round(displayHeight / 2);
+
+    controllerEl.style.setProperty('height', `${pillHeight}px`, 'important');
+    controllerEl.style.setProperty('border-radius', `${Math.round(pillHeight / 2)}px`, 'important');
+
+    const topMargin = anchorStyles ? anchorStyles.marginTop : null;
+    const bottomMargin = anchorStyles ? anchorStyles.marginBottom : null;
+    if (topMargin && topMargin !== '0px') controllerEl.style.setProperty('margin-top', topMargin, 'important');
+    if (bottomMargin && bottomMargin !== '0px') controllerEl.style.setProperty('margin-bottom', bottomMargin, 'important');
+
+    const buttons = controllerEl.querySelectorAll('.ytp-button');
+    buttons.forEach((btn) => {
+      btn.style.setProperty('width', `${buttonSize}px`, 'important');
+      btn.style.setProperty('height', `${buttonSize}px`, 'important');
+      btn.style.setProperty('border-radius', `${buttonRadius}px`, 'important');
+      const svg = btn.querySelector('svg');
+      if (svg) {
+        svg.style.width = `${Math.round(buttonSize * 0.58)}px`;
+        svg.style.height = `${Math.round(buttonSize * 0.58)}px`;
+      }
+    });
+
+    if (displayEl) {
+      displayEl.style.setProperty('height', `${displayHeight}px`, 'important');
+      displayEl.style.setProperty('border-radius', `${displayRadius}px`, 'important');
+    }
   }
 
   function applySavedRate() {
@@ -168,20 +315,35 @@
     }
   }
 
+  function scheduleSetup() {
+    if (pendingSetup) return;
+    pendingSetup = true;
+    requestAnimationFrame(() => {
+      pendingSetup = false;
+      injectControls();
+      applySavedRate();
+    });
+  }
+
   function ensureOnceLoaded() {
     if (mutationObserver) mutationObserver.disconnect();
     mutationObserver = new MutationObserver(() => {
       if (document.querySelector(ANCHOR_SELECTOR) && getVideo()) {
-        injectControls();
-        applySavedRate();
+        scheduleSetup();
       }
     });
     mutationObserver.observe(document.documentElement, { childList: true, subtree: true });
-    injectControls();
-    applySavedRate();
+    scheduleSetup();
   }
 
-  window.addEventListener('yt-navigate-finish', ensureOnceLoaded);
+  window.addEventListener('yt-navigate-finish', scheduleSetup);
+  window.addEventListener('resize', () => {
+    if (!controllerEl) return;
+    requestAnimationFrame(() => {
+      const anchor = findControlsAnchor();
+      if (anchor) applyLayout(anchor);
+    });
+  });
   document.addEventListener('DOMContentLoaded', ensureOnceLoaded, { once: true });
   ensureOnceLoaded();
 })();
